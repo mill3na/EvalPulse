@@ -118,6 +118,14 @@ class AgentResponse(BaseModel):
     cost_usd: float = Field(default=0, ge=0)
 
 
+class AgentSummary(BaseModel):
+    id: str
+    name: str
+    description: str
+    provider: str
+    model: str
+
+
 class MetricResult(BaseModel):
     name: MetricName
     score: float
@@ -167,6 +175,7 @@ class EvalRun(BaseModel):
 
 
 class RunRequest(BaseModel):
+    agent_id: str = "demo-faq-agent"
     dataset_id: str | None = None
     cases: list[EvalCase] | None = None
     baseline_run_id: UUID | None = None

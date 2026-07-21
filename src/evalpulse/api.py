@@ -3,11 +3,11 @@ from uuid import UUID
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from evalpulse.agents import DemoFaqAgent
+from evalpulse.agents import AGENT_CATALOG, get_agent
 from evalpulse.config import settings
 from evalpulse.datasets import DatasetStore, router as datasets_router
 from evalpulse.engine import dataset_fingerprint, run_evaluation
-from evalpulse.models import EvalDataset, EvalRun, RunRequest, SuiteType
+from evalpulse.models import AgentSummary, EvalDataset, EvalRun, RunRequest, SuiteType
 from evalpulse.store import RunStore
 
 app = FastAPI(
@@ -36,6 +36,11 @@ def root() -> dict[str, str]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "healthy"}
+
+
+@app.get("/api/agents", response_model=list[AgentSummary], tags=["Agents"])
+def list_agents() -> list[AgentSummary]:
+    return AGENT_CATALOG
 
 
 @app.get("/api/runs", response_model=list[EvalRun])
@@ -73,7 +78,9 @@ def resolve_dataset(request: RunRequest) -> EvalDataset:
 
 @app.post("/api/runs", response_model=EvalRun, status_code=201)
 async def create_run(request: RunRequest) -> EvalRun:
-    agent = DemoFaqAgent()
+    agent = get_agent(request.agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
     dataset = resolve_dataset(request)
     fingerprint = dataset_fingerprint(dataset)
     if request.baseline_run_id:

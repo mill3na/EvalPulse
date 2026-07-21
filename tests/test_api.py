@@ -53,6 +53,19 @@ def test_metric_catalog() -> None:
     assert "faithfulness" in {metric["name"] for metric in response.json()}
 
 
+def test_agent_catalog() -> None:
+    response = client.get("/api/agents")
+
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == "demo-faq-agent"
+
+
+def test_unknown_agent_is_rejected() -> None:
+    response = client.post("/api/runs", json={"agent_id": "missing"})
+
+    assert response.status_code == 404
+
+
 def test_upload_dataset(tmp_path, monkeypatch) -> None:
     store = DatasetStore(tmp_path / "builtin", tmp_path / "uploaded")
     monkeypatch.setattr(app.state, "dataset_store", store)

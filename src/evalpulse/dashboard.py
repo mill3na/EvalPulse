@@ -34,8 +34,12 @@ def api_get(path: str) -> list[dict] | dict:
     return response.json()
 
 
-def start_run(dataset_id: str) -> dict:
-    response = httpx.post(f"{API_URL}/api/runs", json={"dataset_id": dataset_id}, timeout=30)
+def start_run(dataset_id: str, agent_id: str) -> dict:
+    response = httpx.post(
+        f"{API_URL}/api/runs",
+        json={"dataset_id": dataset_id, "agent_id": agent_id},
+        timeout=30,
+    )
     response.raise_for_status()
     return response.json()
 
@@ -50,6 +54,7 @@ def upload_dataset(payload: bytes) -> dict:
 try:
     datasets = api_get("/api/datasets")
     metrics = api_get("/api/metrics")
+    agents = api_get("/api/agents")
 except httpx.HTTPError as error:
     st.error(f"The API is unavailable at {API_URL}: {error}")
     st.stop()
@@ -57,6 +62,20 @@ except httpx.HTTPError as error:
 run_tab, dataset_tab, metrics_tab = st.tabs(["Run evaluation", "Datasets", "Metrics"])
 
 with run_tab:
+    agent_ids = [agent["id"] for agent in agents]
+    selected_agent_id = st.selectbox(
+        "Agent",
+        options=agent_ids,
+        format_func=lambda agent_id: next(
+            item["name"] for item in agents if item["id"] == agent_id
+        ),
+    )
+    selected_agent = next(item for item in agents if item["id"] == selected_agent_id)
+    agent_column, provider_column, model_column = st.columns([2, 1, 1])
+    agent_column.info(selected_agent["description"])
+    provider_column.metric("Provider", selected_agent["provider"])
+    model_column.metric("Model", selected_agent["model"])
+
     dataset_ids = [dataset["id"] for dataset in datasets]
     selected_dataset_id = st.selectbox(
         "Dataset",
@@ -72,10 +91,24 @@ with run_tab:
         f"{dataset_summary['description']} · {dataset_summary['case_count']} case(s) · "
         + ", ".join(dataset_summary["metrics"])
     )
+    selected_dataset = api_get(f"/api/datasets/{selected_dataset_id}")
+    with st.expander("Preview dataset cases"):
+        for case in selected_dataset["cases"]:
+            st.markdown(f"**{case['id']}** · `{case['input']}`")
+            if case.get("expected"):
+                st.caption(f"Expected: {case['expected']}")
+            st.write(
+                "Metrics: "
+                + ", ".join(
+                    f"{metric['name']} ≥ {metric['threshold']:.0%}" for metric in case["metrics"]
+                )
+            )
     if st.button("Run selected dataset", type="primary"):
         try:
             with st.spinner("Evaluating the demo agent..."):
-                st.session_state["selected_run"] = start_run(selected_dataset_id)["id"]
+                st.session_state["selected_run"] = start_run(
+                    selected_dataset_id, selected_agent_id
+                )["id"]
             st.success("Evaluation completed")
         except httpx.HTTPError as error:
             st.error(f"Could not start the evaluation: {error}")
@@ -139,24 +172,44 @@ if not runs:
     st.info("No runs yet. Select a dataset and start the first evaluation.")
     st.stop()
 
+filter_dataset, filter_status = st.columns(2)
+dataset_filter = filter_dataset.selectbox(
+    "Filter by dataset",
+    options=["All"] + sorted({run.get("dataset_id", "legacy") for run in runs}),
+)
+status_filter = filter_status.selectbox("Filter by status", options=["All", "Passed", "Failed"])
+filtered_runs = [
+    run
+    for run in runs
+    if (dataset_filter == "All" or run.get("dataset_id", "legacy") == dataset_filter)
+    and (
+        status_filter == "All"
+        or (status_filter == "Passed" and run["passed"])
+        or (status_filter == "Failed" and not run["passed"])
+    )
+]
+if not filtered_runs:
+    st.info("No runs match the selected filters.")
+    st.stop()
+
 selected_id = st.selectbox(
     "Evaluation run",
-    options=[run["id"] for run in runs],
+    options=[run["id"] for run in filtered_runs],
     format_func=lambda run_id: next(
         f"{run['created_at'][:19]} · {run.get('dataset_id', 'legacy')} · {run['score']:.0%}"
-        for run in runs
+        for run in filtered_runs
         if run["id"] == run_id
     ),
     index=next(
         (
             index
-            for index, run in enumerate(runs)
+            for index, run in enumerate(filtered_runs)
             if run["id"] == st.session_state.get("selected_run")
         ),
         0,
     ),
 )
-selected = next(run for run in runs if run["id"] == selected_id)
+selected = next(run for run in filtered_runs if run["id"] == selected_id)
 comparison = selected.get("comparison")
 
 status_column, score_column, delta_column, cost_column, latency_column = st.columns(5)
@@ -168,6 +221,10 @@ delta_column.metric(
 )
 cost_column.metric("Cost", f"${selected['total_cost_usd']:.4f}")
 latency_column.metric("Latency", f"{selected['total_latency_ms']:.1f} ms")
+st.caption(
+    "Overall score = average of the metric scores inside each case, then average across cases. "
+    "The run passes only when every configured metric reaches its threshold."
+)
 
 st.caption(
     f"Dataset: {selected.get('dataset_id', 'legacy')} v{selected.get('dataset_version', '?')} · "
@@ -200,6 +257,7 @@ for case in selected["cases"]:
                 "score": metric["score"],
                 "threshold": metric["threshold"],
                 "passed": metric["passed"],
+                "reason": metric.get("reason", "Legacy metric result"),
                 "latency_ms": case["latency_ms"],
             }
         )
@@ -226,6 +284,10 @@ st.dataframe(
         "passed": st.column_config.CheckboxColumn(
             "Passed",
             help="True when score is greater than or equal to the threshold.",
+        ),
+        "reason": st.column_config.TextColumn(
+            "Reason",
+            help="Short explanation generated by the metric evaluator.",
         ),
         "latency_ms": st.column_config.NumberColumn(
             "Latency (ms)",
