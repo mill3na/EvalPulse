@@ -1,3 +1,4 @@
+import json
 import os
 
 import httpx
@@ -10,42 +11,139 @@ st.set_page_config(page_title="EvalPulse", page_icon="💓", layout="wide")
 st.title("EvalPulse")
 st.caption("Continuous, reproducible evaluations for AI agents")
 
+with st.expander("How to read the metrics"):
+    st.markdown(
+        """
+- **Exact match:** the normalized response must equal the expected answer.
+- **Token overlap:** how much of the expected answer appears in the response.
+- **Faithfulness:** how much of the response is supported by the supplied RAG context.
+- **Context recall:** how much of the expected answer was present in the retrieved context.
+- **Source citation:** whether the response cites the expected source identifiers.
+- **Refusal:** whether an unsafe request receives an explicit refusal.
+- **Forbidden pattern absence:** whether configured sensitive patterns are absent.
 
-def fetch_runs() -> list[dict]:
-    response = httpx.get(f"{API_URL}/api/runs", timeout=10)
+Every metric scores from **0% to 100%** and passes when it meets its own threshold.
+A case passes only when all of its configured metrics pass.
+"""
+    )
+
+
+def api_get(path: str) -> list[dict] | dict:
+    response = httpx.get(f"{API_URL}{path}", timeout=10)
     response.raise_for_status()
     return response.json()
 
 
-def start_run() -> dict:
-    response = httpx.post(f"{API_URL}/api/runs", json={}, timeout=30)
+def start_run(dataset_id: str) -> dict:
+    response = httpx.post(f"{API_URL}/api/runs", json={"dataset_id": dataset_id}, timeout=30)
     response.raise_for_status()
     return response.json()
 
 
-if st.button("Run demo evaluation", type="primary"):
-    try:
-        with st.spinner("Evaluating the demo agent..."):
-            st.session_state["selected_run"] = start_run()["id"]
-        st.success("Evaluation completed")
-    except httpx.HTTPError as error:
-        st.error(f"Could not start the evaluation: {error}")
+def upload_dataset(payload: bytes) -> dict:
+    dataset = json.loads(payload)
+    response = httpx.post(f"{API_URL}/api/datasets", json=dataset, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
 
 try:
-    runs = fetch_runs()
+    datasets = api_get("/api/datasets")
+    metrics = api_get("/api/metrics")
 except httpx.HTTPError as error:
     st.error(f"The API is unavailable at {API_URL}: {error}")
     st.stop()
 
+run_tab, dataset_tab, metrics_tab = st.tabs(["Run evaluation", "Datasets", "Metrics"])
+
+with run_tab:
+    dataset_ids = [dataset["id"] for dataset in datasets]
+    selected_dataset_id = st.selectbox(
+        "Dataset",
+        options=dataset_ids,
+        format_func=lambda dataset_id: next(
+            f"{item['name']} · {item['suite_type'].upper()} · v{item['version']}"
+            for item in datasets
+            if item["id"] == dataset_id
+        ),
+    )
+    dataset_summary = next(item for item in datasets if item["id"] == selected_dataset_id)
+    st.caption(
+        f"{dataset_summary['description']} · {dataset_summary['case_count']} case(s) · "
+        + ", ".join(dataset_summary["metrics"])
+    )
+    if st.button("Run selected dataset", type="primary"):
+        try:
+            with st.spinner("Evaluating the demo agent..."):
+                st.session_state["selected_run"] = start_run(selected_dataset_id)["id"]
+            st.success("Evaluation completed")
+        except httpx.HTTPError as error:
+            st.error(f"Could not start the evaluation: {error}")
+
+with dataset_tab:
+    st.subheader("Available datasets")
+    st.dataframe(pd.DataFrame(datasets), use_container_width=True, hide_index=True)
+    uploaded_file = st.file_uploader("Import a dataset", type="json")
+    if uploaded_file and st.button("Validate and save dataset"):
+        try:
+            saved = upload_dataset(uploaded_file.getvalue())
+            st.success(f"Saved {saved['name']} ({saved['id']})")
+            st.rerun()
+        except (json.JSONDecodeError, httpx.HTTPError) as error:
+            st.error(f"Invalid dataset: {error}")
+    with st.expander("Dataset JSON example"):
+        st.code(
+            json.dumps(
+                {
+                    "id": "my-qa-suite",
+                    "name": "My Q&A suite",
+                    "version": "1.0.0",
+                    "suite_type": "qa",
+                    "cases": [
+                        {
+                            "id": "case-001",
+                            "input": "Question",
+                            "expected": "Expected answer",
+                            "metrics": [{"name": "token_overlap", "threshold": 0.8}],
+                        }
+                    ],
+                },
+                indent=2,
+            ),
+            language="json",
+        )
+
+with metrics_tab:
+    st.subheader("Metric catalog")
+    metric_rows = [
+        {
+            "metric": metric["name"],
+            "suites": ", ".join(metric["suites"]),
+            "requires": ", ".join(metric["requires"]) or "response only",
+            "description": metric["description"],
+        }
+        for metric in metrics
+    ]
+    st.dataframe(pd.DataFrame(metric_rows), use_container_width=True, hide_index=True)
+    st.info("Metrics are selected per case in the dataset JSON, each with its own threshold.")
+
+try:
+    runs = api_get("/api/runs")
+except httpx.HTTPError as error:
+    st.error(f"Could not load run history: {error}")
+    st.stop()
+
+st.divider()
+st.header("Run history")
 if not runs:
-    st.info("No runs yet. Start the demo evaluation to create the first baseline.")
+    st.info("No runs yet. Select a dataset and start the first evaluation.")
     st.stop()
 
 selected_id = st.selectbox(
     "Evaluation run",
     options=[run["id"] for run in runs],
     format_func=lambda run_id: next(
-        f"{run['created_at'][:19]} · {run['agent']} · {run['score']:.0%}"
+        f"{run['created_at'][:19]} · {run.get('dataset_id', 'legacy')} · {run['score']:.0%}"
         for run in runs
         if run["id"] == run_id
     ),
@@ -71,29 +169,80 @@ delta_column.metric(
 cost_column.metric("Cost", f"${selected['total_cost_usd']:.4f}")
 latency_column.metric("Latency", f"{selected['total_latency_ms']:.1f} ms")
 
+st.caption(
+    f"Dataset: {selected.get('dataset_id', 'legacy')} v{selected.get('dataset_version', '?')} · "
+    f"Suite: {selected.get('suite_type', 'qa').upper()} · Agent: {selected['agent']}"
+)
+
 if comparison:
     if comparison["regressed_cases"]:
         st.error("Regression detected: " + ", ".join(comparison["regressed_cases"]))
     elif comparison["improved_cases"]:
         st.success("Improved cases: " + ", ".join(comparison["improved_cases"]))
     else:
-        st.info("No score changes compared with the previous run.")
+        st.info("No score changes compared with the previous compatible run.")
 
-case_rows = pd.DataFrame(selected["cases"])
-case_rows["score"] = case_rows["score"].map(lambda value: f"{value:.0%}")
-case_rows["latency_ms"] = case_rows["latency_ms"].map(lambda value: f"{value:.3f}")
-st.subheader("Case results")
+metric_rows = []
+for case in selected["cases"]:
+    results = case.get("metrics") or [
+        {
+            "name": case.get("metric", "legacy"),
+            "score": case["score"],
+            "threshold": case.get("threshold", 1),
+            "passed": case["passed"],
+        }
+    ]
+    for metric in results:
+        metric_rows.append(
+            {
+                "case": case["case_id"],
+                "metric": metric["name"],
+                "score": metric["score"],
+                "threshold": metric["threshold"],
+                "passed": metric["passed"],
+                "latency_ms": case["latency_ms"],
+            }
+        )
+st.subheader("Metric results")
 st.dataframe(
-    case_rows[["case_id", "metric", "score", "threshold", "passed", "latency_ms", "cost_usd"]],
+    pd.DataFrame(metric_rows),
     use_container_width=True,
     hide_index=True,
+    column_config={
+        "metric": st.column_config.TextColumn(
+            "Metric",
+            help="Evaluation criterion selected by the dataset for this case.",
+        ),
+        "score": st.column_config.NumberColumn(
+            "Score",
+            help="Observed quality from 0% to 100%.",
+            format="percent",
+        ),
+        "threshold": st.column_config.NumberColumn(
+            "Threshold",
+            help="Minimum score required for this metric to pass.",
+            format="percent",
+        ),
+        "passed": st.column_config.CheckboxColumn(
+            "Passed",
+            help="True when score is greater than or equal to the threshold.",
+        ),
+        "latency_ms": st.column_config.NumberColumn(
+            "Latency (ms)",
+            help="End-to-end response time measured for this case.",
+            format="%.3f",
+        ),
+    },
 )
 
-if len(runs) > 1:
+compatible_runs = [
+    run for run in reversed(runs) if run.get("dataset_hash") == selected.get("dataset_hash")
+]
+if len(compatible_runs) > 1:
     history = pd.DataFrame(
         {
-            "created_at": pd.to_datetime([run["created_at"] for run in reversed(runs)]),
-            "score": [run["score"] for run in reversed(runs)],
+            "created_at": pd.to_datetime([run["created_at"] for run in compatible_runs]),
+            "score": [run["score"] for run in compatible_runs],
         }
     ).set_index("created_at")
     st.subheader("Quality over time")

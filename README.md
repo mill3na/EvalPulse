@@ -10,8 +10,9 @@ the results, and compares each execution with its baseline.
 
 - FastAPI evaluation API with OpenAPI documentation
 - Streamlit dashboard with run history, quality trend and case drill-down
-- Exact-match and token-overlap metrics
-- Per-case thresholds and aggregate pass/fail status
+- QA, RAG, security and custom evaluation suites
+- Seven deterministic metrics with multiple metrics per case
+- Per-metric thresholds and aggregate pass/fail status
 - Latency, token and USD cost contracts ready for real provider adapters
 - Automatic comparison with the previous run
 - Dataset fingerprints that prevent invalid baseline comparisons
@@ -35,34 +36,64 @@ Then open:
 - API documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Health check: [http://localhost:8000/health](http://localhost:8000/health)
 
-Click **Run demo evaluation**. The first run becomes the baseline; later runs are
+Choose one of the bundled QA, RAG or security datasets and click
+**Run selected dataset**. You can also import your own JSON dataset from the
+**Datasets** tab. The first run becomes the baseline; later compatible runs are
 compared automatically.
 
 ## API example
 
-Start a run with the built-in dataset:
+List the available datasets and metrics:
 
 ```bash
-curl -X POST http://localhost:8000/api/runs \
-  -H 'Content-Type: application/json' \
-  -d '{}'
+curl http://localhost:8000/api/datasets
+curl http://localhost:8000/api/metrics
 ```
 
-Or provide versioned cases from your own dataset:
+Start a run with a selected dataset:
 
 ```bash
 curl -X POST http://localhost:8000/api/runs \
   -H 'Content-Type: application/json' \
+  -d '{"dataset_id":"rag-demo"}'
+```
+
+Create or replace a validated dataset:
+
+```bash
+curl -X POST http://localhost:8000/api/datasets \
+  -H 'Content-Type: application/json' \
   -d '{
+    "id": "my-rag-suite",
+    "name": "My RAG suite",
+    "version": "1.0.0",
+    "suite_type": "rag",
     "cases": [{
-      "id": "description",
-      "input": "What is EvalPulse?",
-      "expected": "EvalPulse evaluates AI agents continuously.",
-      "metric": "exact_match",
-      "threshold": 1
+      "id": "policy-001",
+      "input": "What is the return window?",
+      "expected": "Returns are allowed within 30 days.",
+      "contexts": ["Returns are allowed within 30 days after purchase."],
+      "expected_sources": ["returns-policy.md"],
+      "metrics": [
+        {"name": "faithfulness", "threshold": 0.6},
+        {"name": "context_recall", "threshold": 1.0},
+        {"name": "source_citation", "threshold": 1.0}
+      ]
     }]
   }'
 ```
+
+Available metrics:
+
+| Metric | Typical suite | Purpose |
+|---|---|---|
+| `exact_match` | QA | Normalized answer equality |
+| `token_overlap` | QA/RAG | Expected-token recall in the answer |
+| `faithfulness` | RAG | Answer content supported by context |
+| `context_recall` | RAG | Expected answer covered by retrieved context |
+| `source_citation` | RAG | Expected sources cited in the answer |
+| `refusal` | Security | Explicit refusal of an unsafe request |
+| `forbidden_pattern_absence` | Security | No configured sensitive pattern leaked |
 
 Pass `baseline_run_id` to compare against a specific run. When omitted, EvalPulse
 uses the most recent run of the same agent.
@@ -78,7 +109,7 @@ Streamlit dashboard :8501
    ▼
 FastAPI :8000 ──► evaluation engine ──► agent adapter
    │                    │
-   │                    └── exact match / token overlap
+   │                    └── QA / RAG / security metric registry
    ▼
 JSONL run store on Docker volume
 ```
@@ -87,10 +118,11 @@ JSONL run store on Docker volume
 src/evalpulse/
 ├── agents.py       # agent protocol and deterministic demo adapter
 ├── engine.py       # evaluation and baseline comparison
-├── metrics.py      # deterministic scorers
+├── metrics.py      # generic metric registry and deterministic scorers
 ├── models.py       # API and evaluation contracts
 ├── store.py        # append-only local persistence
-├── api.py          # FastAPI endpoints
+├── datasets/       # dataset catalog service and routes
+├── api.py          # run endpoints and application assembly
 └── dashboard.py    # Streamlit interface
 ```
 
@@ -119,7 +151,7 @@ pytest --cov=evalpulse
 Run the same quality gate used by CI:
 
 ```bash
-evalpulse datasets/demo.json --output evalpulse-report.json
+evalpulse datasets/qa-demo.json --output evalpulse-report.json
 ```
 
 The generated report contains the complete run contract and can be uploaded as a
@@ -127,9 +159,9 @@ CI artifact. A failed threshold or case regression exits with status `1`.
 
 ## Roadmap
 
-- Provider adapters and token/cost capture
+- Provider adapters with real token/cost capture
 - Configurable regression tolerance and CI quality gate
-- Rubric-based and LLM-as-judge metrics with judge metadata
+- Semantic, rubric-based and LLM-as-judge metrics with judge metadata
 - Exportable HTML/JSON reports
 
 Kubernetes is intentionally outside the initial scope. The project should remain

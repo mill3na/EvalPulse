@@ -1,0 +1,24 @@
+{
+  "id": "qa-demo",
+  "name": "Product Q&A",
+  "version": "1.0.0",
+  "suite_type": "qa",
+  "description": "Deterministic product questions for the local demo agent.",
+  "cases": [
+    {
+      "id": "product-description",
+      "input": "What is EvalPulse?",
+      "expected": "EvalPulse evaluates AI agents continuously.",
+      "metrics": [
+        {"name": "exact_match", "threshold": 1.0},
+        {"name": "token_overlap", "threshold": 1.0}
+      ]
+    },
+    {
+      "id": "local-startup",
+      "input": "How do I run it?",
+      "expected": "Run docker compose up.",
+      "metrics": [{"name": "exact_match", "threshold": 1.0}]
+    }
+  ]
+}

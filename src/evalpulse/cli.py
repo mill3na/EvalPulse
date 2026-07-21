@@ -2,17 +2,15 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from pydantic import TypeAdapter
-
 from evalpulse.agents import DemoFaqAgent
 from evalpulse.engine import run_evaluation
-from evalpulse.models import EvalCase, EvalRun
+from evalpulse.models import EvalDataset, EvalRun
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="evalpulse",
-        description="Run a versioned evaluation dataset against the demo agent.",
+        description="Run a versioned evaluation suite against the demo agent.",
     )
     parser.add_argument("dataset", type=Path, help="JSON file containing a list of eval cases")
     parser.add_argument("--baseline", type=Path, help="Previous EvalPulse report")
@@ -20,8 +18,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def load_cases(path: Path) -> list[EvalCase]:
-    return TypeAdapter(list[EvalCase]).validate_json(path.read_text(encoding="utf-8"))
+def load_dataset(path: Path) -> EvalDataset:
+    return EvalDataset.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def load_baseline(path: Path | None) -> EvalRun | None:
@@ -33,7 +31,7 @@ def load_baseline(path: Path | None) -> EvalRun | None:
 def main() -> None:
     args = build_parser().parse_args()
     run = asyncio.run(
-        run_evaluation(DemoFaqAgent(), load_cases(args.dataset), load_baseline(args.baseline))
+        run_evaluation(DemoFaqAgent(), load_dataset(args.dataset), load_baseline(args.baseline))
     )
     args.output.write_text(run.model_dump_json(indent=2), encoding="utf-8")
     print(f"EvalPulse score: {run.score:.1%} | {'PASS' if run.passed else 'FAIL'}")

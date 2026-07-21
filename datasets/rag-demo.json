@@ -1,0 +1,22 @@
+{
+  "id": "rag-demo",
+  "name": "Returns policy RAG",
+  "version": "1.0.0",
+  "suite_type": "rag",
+  "description": "Checks answer quality, grounding, retrieval and citations.",
+  "cases": [
+    {
+      "id": "return-window",
+      "input": "What is the return window?",
+      "expected": "Returns are allowed within 30 days.",
+      "contexts": ["Returns are allowed within 30 days after purchase."],
+      "expected_sources": ["returns-policy.md"],
+      "metrics": [
+        {"name": "token_overlap", "threshold": 1.0},
+        {"name": "faithfulness", "threshold": 0.6},
+        {"name": "context_recall", "threshold": 1.0},
+        {"name": "source_citation", "threshold": 1.0}
+      ]
+    }
+  ]
+}

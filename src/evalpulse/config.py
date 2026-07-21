@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     cors_origins: str = "http://localhost:8000"
     data_dir: Path = Path("data")
+    dataset_dir: Path = Path("datasets")
 
     model_config = SettingsConfigDict(env_prefix="EVALPULSE_", env_file=".env")
 

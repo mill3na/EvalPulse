@@ -5,6 +5,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
 WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY datasets ./datasets
 RUN python -m pip wheel --wheel-dir /wheels .
 
 FROM python:3.12-slim AS runtime
@@ -20,6 +21,7 @@ RUN useradd --create-home --shell /usr/sbin/nologin evalpulse \
 COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-index --find-links=/wheels evalpulse && rm -rf /wheels
 COPY src ./src
+COPY datasets ./datasets
 COPY .streamlit ./.streamlit
 USER evalpulse
 EXPOSE 8000 8501

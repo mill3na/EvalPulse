@@ -1,8 +1,11 @@
+from pathlib import Path
+
 import pytest
 
 from evalpulse.agents import DemoFaqAgent
+from evalpulse.cli import load_dataset
 from evalpulse.engine import run_evaluation
-from evalpulse.models import AgentResponse, EvalCase
+from evalpulse.models import AgentResponse, EvalCase, EvalDataset, SuiteType
 
 
 class MeteredAgent:
@@ -12,28 +15,28 @@ class MeteredAgent:
         return AgentResponse(content=prompt, input_tokens=2, output_tokens=3, cost_usd=0.001)
 
 
+def inline_dataset(case: EvalCase, dataset_id: str = "test") -> EvalDataset:
+    return EvalDataset(
+        id=dataset_id,
+        name="Test dataset",
+        version="1.0.0",
+        suite_type=SuiteType.CUSTOM,
+        cases=[case],
+    )
+
+
 @pytest.mark.asyncio
-async def test_run_evaluation_reports_pass_and_score() -> None:
-    cases = [
-        EvalCase(
-            id="description",
-            input="What is EvalPulse?",
-            expected="EvalPulse evaluates AI agents continuously.",
-        )
-    ]
-
-    run = await run_evaluation(DemoFaqAgent(), cases)
-
-    assert run.passed is True
-    assert run.score == 1.0
-    assert run.cases[0].passed is True
+async def test_all_demo_suites_pass() -> None:
+    for path in Path("datasets").glob("*.json"):
+        run = await run_evaluation(DemoFaqAgent(), load_dataset(path))
+        assert run.passed is True, path
 
 
 @pytest.mark.asyncio
 async def test_run_aggregates_usage_and_cost() -> None:
-    cases = [EvalCase(id="usage", input="same", expected="same")]
+    dataset = inline_dataset(EvalCase(id="usage", input="same", expected="same"))
 
-    run = await run_evaluation(MeteredAgent(), cases)
+    run = await run_evaluation(MeteredAgent(), dataset)
 
     assert run.total_tokens == 5
     assert run.total_cost_usd == 0.001
@@ -44,12 +47,14 @@ async def test_run_aggregates_usage_and_cost() -> None:
 async def test_incompatible_baseline_is_rejected() -> None:
     baseline = await run_evaluation(
         DemoFaqAgent(),
-        [EvalCase(id="first", input="What is EvalPulse?", expected="wrong")],
+        inline_dataset(EvalCase(id="first", input="What is EvalPulse?", expected="wrong"), "first"),
     )
 
     with pytest.raises(ValueError, match="Baseline dataset"):
         await run_evaluation(
             DemoFaqAgent(),
-            [EvalCase(id="second", input="What is EvalPulse?", expected="wrong")],
+            inline_dataset(
+                EvalCase(id="second", input="What is EvalPulse?", expected="wrong"), "second"
+            ),
             baseline,
         )
