@@ -1,0 +1,38 @@
+services:
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:${EVALPULSE_API_PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      EVALPULSE_DATA_DIR: /data
+    volumes:
+      - evalpulse-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  dashboard:
+    build: .
+    command: streamlit run src/evalpulse/dashboard.py --server.address=0.0.0.0 --server.port=8501
+    ports:
+      - "127.0.0.1:${EVALPULSE_DASHBOARD_PORT:-8501}:8501"
+    environment:
+      EVALPULSE_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  evalpulse-data:

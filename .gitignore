@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.streamlit/secrets.toml
+.coverage
+htmlcov/
+.env
+.DS_Store
+data/*.json
+!data/.gitkeep
+evalpulse-report.json
