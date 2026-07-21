@@ -44,11 +44,14 @@ def start_run(dataset_id: str, agent_id: str) -> dict:
     return response.json()
 
 
-def upload_dataset(payload: bytes) -> dict:
-    dataset = json.loads(payload)
+def save_dataset(dataset: dict) -> dict:
     response = httpx.post(f"{API_URL}/api/datasets", json=dataset, timeout=10)
     response.raise_for_status()
     return response.json()
+
+
+def non_empty_lines(value: str) -> list[str]:
+    return [line.strip() for line in value.splitlines() if line.strip()]
 
 
 try:
@@ -114,37 +117,145 @@ with run_tab:
             st.error(f"Could not start the evaluation: {error}")
 
 with dataset_tab:
-    st.subheader("Available datasets")
-    st.dataframe(pd.DataFrame(datasets), use_container_width=True, hide_index=True)
-    uploaded_file = st.file_uploader("Import a dataset", type="json")
-    if uploaded_file and st.button("Validate and save dataset"):
-        try:
-            saved = upload_dataset(uploaded_file.getvalue())
-            st.success(f"Saved {saved['name']} ({saved['id']})")
-            st.rerun()
-        except (json.JSONDecodeError, httpx.HTTPError) as error:
-            st.error(f"Invalid dataset: {error}")
-    with st.expander("Dataset JSON example"):
-        st.code(
-            json.dumps(
-                {
-                    "id": "my-qa-suite",
-                    "name": "My Q&A suite",
-                    "version": "1.0.0",
-                    "suite_type": "qa",
-                    "cases": [
-                        {
-                            "id": "case-001",
-                            "input": "Question",
-                            "expected": "Expected answer",
-                            "metrics": [{"name": "token_overlap", "threshold": 0.8}],
-                        }
-                    ],
-                },
-                indent=2,
-            ),
-            language="json",
+    browse_tab, create_tab, import_tab = st.tabs(["Browse", "Create visually", "Import JSON"])
+    with browse_tab:
+        st.subheader("Available datasets")
+        st.dataframe(pd.DataFrame(datasets), use_container_width=True, hide_index=True)
+
+    with create_tab:
+        st.subheader("Create a dataset")
+        identity_column, version_column, suite_column = st.columns([2, 1, 1])
+        new_name = identity_column.text_input("Name", placeholder="Customer support QA")
+        new_version = version_column.text_input("Version", value="1.0.0")
+        new_suite = suite_column.selectbox("Suite type", ["qa", "rag", "security", "custom"])
+        new_id = st.text_input(
+            "Dataset ID",
+            placeholder="customer-support-qa",
+            help="Lowercase letters, numbers, hyphens and underscores only.",
         )
+        new_description = st.text_area("Description", height=80)
+        case_count = st.number_input("Number of cases", min_value=1, max_value=10, value=1)
+        suite_metrics = [
+            metric["name"]
+            for metric in metrics
+            if new_suite in metric["suites"] or new_suite == "custom"
+        ]
+        default_metrics = {
+            "qa": ["token_overlap"],
+            "rag": ["token_overlap", "faithfulness", "context_recall", "source_citation"],
+            "security": ["refusal", "forbidden_pattern_absence"],
+            "custom": ["token_overlap"],
+        }
+        new_cases = []
+        for case_index in range(int(case_count)):
+            with st.expander(f"Case {case_index + 1}", expanded=case_index == 0):
+                case_id = st.text_input(
+                    "Case ID", value=f"case-{case_index + 1:03}", key=f"builder-id-{case_index}"
+                )
+                case_input = st.text_area("Input", key=f"builder-input-{case_index}")
+                expected = ""
+                contexts: list[str] = []
+                expected_sources: list[str] = []
+                forbidden_patterns: list[str] = []
+                if new_suite != "security":
+                    expected = st.text_area("Expected answer", key=f"builder-expected-{case_index}")
+                if new_suite == "rag":
+                    contexts = non_empty_lines(
+                        st.text_area(
+                            "Retrieved contexts (one per line)",
+                            key=f"builder-contexts-{case_index}",
+                        )
+                    )
+                    expected_sources = non_empty_lines(
+                        st.text_area(
+                            "Expected sources (one per line)", key=f"builder-sources-{case_index}"
+                        )
+                    )
+                if new_suite == "security":
+                    forbidden_patterns = non_empty_lines(
+                        st.text_area(
+                            "Forbidden patterns (one per line)",
+                            key=f"builder-patterns-{case_index}",
+                        )
+                    )
+                selected_metrics = st.multiselect(
+                    "Metrics",
+                    suite_metrics,
+                    default=[name for name in default_metrics[new_suite] if name in suite_metrics],
+                    key=f"builder-metrics-{case_index}",
+                )
+                configured_metrics = [
+                    {
+                        "name": metric_name,
+                        "threshold": st.slider(
+                            f"{metric_name} threshold",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=0.8 if metric_name in {"token_overlap", "faithfulness"} else 1.0,
+                            step=0.05,
+                            key=f"builder-threshold-{case_index}-{metric_name}",
+                        ),
+                    }
+                    for metric_name in selected_metrics
+                ]
+                new_cases.append(
+                    {
+                        "id": case_id,
+                        "input": case_input,
+                        "expected": expected,
+                        "contexts": contexts,
+                        "expected_sources": expected_sources,
+                        "forbidden_patterns": forbidden_patterns,
+                        "metrics": configured_metrics,
+                    }
+                )
+        if st.button("Validate and save", type="primary"):
+            try:
+                saved = save_dataset(
+                    {
+                        "id": new_id,
+                        "name": new_name,
+                        "version": new_version,
+                        "suite_type": new_suite,
+                        "description": new_description,
+                        "cases": new_cases,
+                    }
+                )
+                st.success(f"Saved {saved['name']} ({saved['id']})")
+                st.rerun()
+            except httpx.HTTPStatusError as error:
+                st.error(f"Dataset validation failed: {error.response.text}")
+
+    with import_tab:
+        uploaded_file = st.file_uploader("Import a dataset", type="json")
+        if uploaded_file and st.button("Validate and save JSON"):
+            try:
+                saved = save_dataset(json.loads(uploaded_file.getvalue()))
+                st.success(f"Saved {saved['name']} ({saved['id']})")
+                st.rerun()
+            except (json.JSONDecodeError, httpx.HTTPError) as error:
+                st.error(f"Invalid dataset: {error}")
+        with st.expander("Dataset JSON example"):
+            st.code(
+                json.dumps(
+                    {
+                        "id": "my-qa-suite",
+                        "name": "My Q&A suite",
+                        "version": "1.0.0",
+                        "suite_type": "qa",
+                        "cases": [
+                            {
+                                "id": "case-001",
+                                "input": "Question",
+                                "expected": "Expected answer",
+                                "metrics": [{"name": "token_overlap", "threshold": 0.8}],
+                            }
+                        ],
+                    },
+                    indent=2,
+                ),
+                language="json",
+            )
 
 with metrics_tab:
     st.subheader("Metric catalog")
