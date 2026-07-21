@@ -58,7 +58,7 @@ def get_run(run_id: UUID) -> EvalRun:
 
 def resolve_dataset(request: RunRequest) -> EvalDataset:
     if request.dataset_id:
-        dataset = app.state.dataset_store.get(request.dataset_id)
+        dataset = app.state.dataset_store.get(request.dataset_id, request.dataset_revision)
         if dataset is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         return dataset

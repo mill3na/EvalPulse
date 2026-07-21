@@ -54,6 +54,9 @@ class EvalDataset(BaseModel):
     version: str = Field(min_length=1)
     suite_type: SuiteType
     description: str = ""
+    revision: int = Field(default=1, ge=1)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     cases: list[EvalCase] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -107,6 +110,10 @@ class DatasetSummary(BaseModel):
     version: str
     suite_type: SuiteType
     description: str
+    revision: int
+    created_at: datetime
+    updated_at: datetime
+    fingerprint: str
     case_count: int
     metrics: list[MetricName]
 
@@ -163,6 +170,7 @@ class EvalRun(BaseModel):
     agent: str
     dataset_id: str = "inline"
     dataset_version: str = "legacy"
+    dataset_revision: int = 1
     suite_type: SuiteType = SuiteType.QA
     dataset_hash: str = ""
     score: float
@@ -177,6 +185,7 @@ class EvalRun(BaseModel):
 class RunRequest(BaseModel):
     agent_id: str = "demo-faq-agent"
     dataset_id: str | None = None
+    dataset_revision: int | None = Field(default=None, ge=1)
     cases: list[EvalCase] | None = None
     baseline_run_id: UUID | None = None
 

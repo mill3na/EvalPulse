@@ -15,7 +15,9 @@ from evalpulse.models import (
 
 def dataset_fingerprint(dataset: EvalDataset) -> str:
     encoded = json.dumps(
-        dataset.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+        dataset.model_dump(mode="json", exclude={"revision", "created_at", "updated_at"}),
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode()
     return hashlib.sha256(encoded).hexdigest()[:12]
 
@@ -68,6 +70,7 @@ async def run_evaluation(
         agent=agent.name,
         dataset_id=dataset.id,
         dataset_version=dataset.version,
+        dataset_revision=dataset.revision,
         suite_type=dataset.suite_type,
         dataset_hash=fingerprint,
         score=round(aggregate, 4),

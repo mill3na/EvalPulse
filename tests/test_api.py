@@ -44,6 +44,7 @@ def test_dataset_catalog() -> None:
         "rag-demo",
         "security-demo",
     }
+    assert all("revision" in dataset for dataset in response.json())
 
 
 def test_metric_catalog() -> None:

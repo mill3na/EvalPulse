@@ -34,10 +34,14 @@ def api_get(path: str) -> list[dict] | dict:
     return response.json()
 
 
-def start_run(dataset_id: str, agent_id: str) -> dict:
+def start_run(dataset_id: str, dataset_revision: int, agent_id: str) -> dict:
     response = httpx.post(
         f"{API_URL}/api/runs",
-        json={"dataset_id": dataset_id, "agent_id": agent_id},
+        json={
+            "dataset_id": dataset_id,
+            "dataset_revision": dataset_revision,
+            "agent_id": agent_id,
+        },
         timeout=30,
     )
     response.raise_for_status()
@@ -84,18 +88,41 @@ with run_tab:
         "Dataset",
         options=dataset_ids,
         format_func=lambda dataset_id: next(
-            f"{item['name']} · {item['suite_type'].upper()} · v{item['version']}"
+            f"{item['name']} · {item['suite_type'].upper()} · v{item['version']} · "
+            f"rev {item['revision']} · {item['updated_at'][:10]}"
             for item in datasets
             if item["id"] == dataset_id
         ),
     )
     dataset_summary = next(item for item in datasets if item["id"] == selected_dataset_id)
+    dataset_revisions = api_get(f"/api/datasets/{selected_dataset_id}/revisions")
+    selected_revision = st.selectbox(
+        "Revision",
+        options=[revision["revision"] for revision in dataset_revisions],
+        format_func=lambda revision_number: next(
+            f"rev {item['revision']} · v{item['version']} · updated {item['updated_at'][:19]}"
+            for item in dataset_revisions
+            if item["revision"] == revision_number
+        ),
+    )
+    selected_revision_summary = next(
+        item for item in dataset_revisions if item["revision"] == selected_revision
+    )
     st.caption(
         f"{dataset_summary['description']} · {dataset_summary['case_count']} case(s) · "
         + ", ".join(dataset_summary["metrics"])
     )
-    selected_dataset = api_get(f"/api/datasets/{selected_dataset_id}")
+    st.info(
+        "Metrics belong to the selected dataset revision, not to an individual run. "
+        "To evaluate with different metrics, save a new revision in the Datasets tab."
+    )
+    selected_dataset = api_get(f"/api/datasets/{selected_dataset_id}/revisions/{selected_revision}")
     with st.expander("Preview dataset cases"):
+        st.caption(
+            f"Created: {selected_revision_summary['created_at'][:19]} · "
+            f"Updated: {selected_revision_summary['updated_at'][:19]} · "
+            f"Fingerprint: {selected_revision_summary['fingerprint']}"
+        )
         for case in selected_dataset["cases"]:
             st.markdown(f"**{case['id']}** · `{case['input']}`")
             if case.get("expected"):
@@ -110,7 +137,7 @@ with run_tab:
         try:
             with st.spinner("Evaluating the demo agent..."):
                 st.session_state["selected_run"] = start_run(
-                    selected_dataset_id, selected_agent_id
+                    selected_dataset_id, selected_revision, selected_agent_id
                 )["id"]
             st.success("Evaluation completed")
         except httpx.HTTPError as error:
@@ -124,6 +151,10 @@ with dataset_tab:
 
     with create_tab:
         st.subheader("Create a dataset")
+        st.caption(
+            "Saving an existing Dataset ID creates a new immutable revision; previous revisions "
+            "remain available for reproducible runs."
+        )
         identity_column, version_column, suite_column = st.columns([2, 1, 1])
         new_name = identity_column.text_input("Name", placeholder="Customer support QA")
         new_version = version_column.text_input("Version", value="1.0.0")
@@ -269,7 +300,10 @@ with metrics_tab:
         for metric in metrics
     ]
     st.dataframe(pd.DataFrame(metric_rows), use_container_width=True, hide_index=True)
-    st.info("Metrics are selected per case in the dataset JSON, each with its own threshold.")
+    st.info(
+        "Metrics are selected per case when creating a dataset. Adding a completely new metric "
+        "implementation still requires code and tests; the UI configures metrics already in the catalog."
+    )
 
 try:
     runs = api_get("/api/runs")
@@ -307,7 +341,8 @@ selected_id = st.selectbox(
     "Evaluation run",
     options=[run["id"] for run in filtered_runs],
     format_func=lambda run_id: next(
-        f"{run['created_at'][:19]} · {run.get('dataset_id', 'legacy')} · {run['score']:.0%}"
+        f"{run['created_at'][:19]} · {run.get('dataset_id', 'legacy')} "
+        f"rev {run.get('dataset_revision', 1)} · {run['score']:.0%}"
         for run in filtered_runs
         if run["id"] == run_id
     ),
@@ -338,7 +373,8 @@ st.caption(
 )
 
 st.caption(
-    f"Dataset: {selected.get('dataset_id', 'legacy')} v{selected.get('dataset_version', '?')} · "
+    f"Dataset: {selected.get('dataset_id', 'legacy')} v{selected.get('dataset_version', '?')} "
+    f"rev {selected.get('dataset_revision', 1)} · "
     f"Suite: {selected.get('suite_type', 'qa').upper()} · Agent: {selected['agent']}"
 )
 

@@ -16,6 +16,7 @@ the results, and compares each execution with its baseline.
 - Latency, token and USD cost contracts ready for real provider adapters
 - Automatic comparison with the previous run
 - Dataset fingerprints that prevent invalid baseline comparisons
+- Immutable dataset revisions with creation and update timestamps
 - Regression and improvement detection by case
 - Append-only JSONL persistence in a Docker volume
 - Deterministic FAQ agent for a zero-cost local demo
@@ -97,6 +98,10 @@ Available metrics:
 
 Pass `baseline_run_id` to compare against a specific run. When omitted, EvalPulse
 uses the most recent run of the same agent.
+
+Saving an existing dataset ID creates a new immutable revision. Runs record the
+exact `dataset_id`, `dataset_revision` and fingerprint, so old results remain
+reproducible even after the suite evolves.
 
 ## Architecture
 
