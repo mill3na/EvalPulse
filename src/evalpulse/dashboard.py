@@ -66,7 +66,9 @@ except httpx.HTTPError as error:
     st.error(f"The API is unavailable at {API_URL}: {error}")
     st.stop()
 
-run_tab, dataset_tab, metrics_tab = st.tabs(["Run evaluation", "Datasets", "Metrics"])
+run_tab, dataset_tab, metrics_tab = st.tabs(
+    ["Run evaluation", "➕ Add / manage datasets", "Metrics"]
+)
 
 with run_tab:
     agent_ids = [agent["id"] for agent in agents]
@@ -84,6 +86,20 @@ with run_tab:
     model_column.metric("Model", selected_agent["model"])
 
     dataset_ids = [dataset["id"] for dataset in datasets]
+    with st.expander("➕ Import a new dataset JSON"):
+        st.caption(
+            "Upload a validated dataset here, or use the visual builder in the "
+            "Add / manage datasets tab."
+        )
+        quick_upload = st.file_uploader("Dataset JSON", type="json", key="quick-dataset-upload")
+        if quick_upload and st.button("Import and select", key="quick-import-button"):
+            try:
+                saved = save_dataset(json.loads(quick_upload.getvalue()))
+                st.session_state["preferred_dataset_id"] = saved["id"]
+                st.success(f"Imported {saved['name']} as revision {saved['revision']}")
+                st.rerun()
+            except (json.JSONDecodeError, httpx.HTTPError) as error:
+                st.error(f"Invalid dataset: {error}")
     selected_dataset_id = st.selectbox(
         "Dataset",
         options=dataset_ids,
@@ -92,6 +108,11 @@ with run_tab:
             f"rev {item['revision']} · {item['updated_at'][:10]}"
             for item in datasets
             if item["id"] == dataset_id
+        ),
+        index=(
+            dataset_ids.index(st.session_state["preferred_dataset_id"])
+            if st.session_state.get("preferred_dataset_id") in dataset_ids
+            else 0
         ),
     )
     dataset_summary = next(item for item in datasets if item["id"] == selected_dataset_id)
@@ -144,11 +165,7 @@ with run_tab:
             st.error(f"Could not start the evaluation: {error}")
 
 with dataset_tab:
-    browse_tab, create_tab, import_tab = st.tabs(["Browse", "Create visually", "Import JSON"])
-    with browse_tab:
-        st.subheader("Available datasets")
-        st.dataframe(pd.DataFrame(datasets), use_container_width=True, hide_index=True)
-
+    create_tab, import_tab, browse_tab = st.tabs(["Create visually", "Import JSON", "Browse"])
     with create_tab:
         st.subheader("Create a dataset")
         st.caption(
@@ -287,6 +304,10 @@ with dataset_tab:
                 ),
                 language="json",
             )
+
+    with browse_tab:
+        st.subheader("Available datasets")
+        st.dataframe(pd.DataFrame(datasets), use_container_width=True, hide_index=True)
 
 with metrics_tab:
     st.subheader("Metric catalog")
